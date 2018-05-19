@@ -31,6 +31,14 @@ def client():
     unmount_all()
 
 
+def test_root(client: Client):
+    res = client.get("/")
+    data = res.get_json()
+
+    assert res.status_code == 200
+    assert len(data["_links"]) == 1
+
+
 def test_get_volumes(client: Client):
     res = client.get("/volumes")
     data = res.get_json()
@@ -58,7 +66,7 @@ def test_put_volume(client: Client):
     assert data["mounted"]
 
 
-@pytest.mark.parametrize("password", [("",), ("food",)])
+@pytest.mark.parametrize("password", [("",), ("FOO",)])
 def test_put_volume_incorrect_password(client: Client, password):
     res = client.put("/volumes/test", json={"password": password})
     data = res.get_json()

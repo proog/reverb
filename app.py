@@ -10,9 +10,8 @@ def to_json(volume: Volume):
     links = [{"rel": "self", "href": url_for("volume", name=volume.name)}]
 
     if is_mounted:
-        links.append(
-            {"rel": "files", "href": url_for("volume_files", name=volume.name)}
-        )
+        files_link = {"rel": "files", "href": url_for("volume_files", name=volume.name)}
+        links.append(files_link)
 
     return {"name": volume.name, "mounted": is_mounted, "_links": links}
 
@@ -29,6 +28,12 @@ class BaseAPI(MethodView):
             abort(404)
 
         return volume
+
+
+class RootAPI(MethodView):
+
+    def get(self):
+        return jsonify({"_links": [{"rel": "volumes", "href": url_for("volumes")}]})
 
 
 class VolumesAPI(BaseAPI):
@@ -103,10 +108,12 @@ class VolumeFilesAPI(BaseAPI):
 def make_app(manager: VolumeManager):
     app = Flask(__name__)
 
+    root_view = RootAPI.as_view("root")
     volumes_view = VolumesAPI.as_view("volumes", manager=manager)
     volume_view = VolumeAPI.as_view("volume", manager=manager)
     volume_files_view = VolumeFilesAPI.as_view("volume_files", manager=manager)
 
+    app.add_url_rule("/", view_func=root_view)
     app.add_url_rule("/volumes", view_func=volumes_view)
     app.add_url_rule("/volumes/<name>", view_func=volume_view)
     app.add_url_rule("/volumes/<name>/files", view_func=volume_files_view)
