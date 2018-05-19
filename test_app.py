@@ -6,6 +6,7 @@ from app import make_app
 from veracrypt import VolumeManager
 
 manager = VolumeManager(testhelper.VOLUMES_PATH)
+app = make_app(manager)
 
 
 def get_href(obj, rel):
@@ -24,10 +25,7 @@ def unmount_all():
 @pytest.fixture
 def client():
     testhelper.reset_test_data()
-    app = make_app(manager)
-
     yield app.test_client()
-
     unmount_all()
 
 
@@ -55,6 +53,7 @@ def test_get_volume(client: Client):
     assert res.status_code == 200
     assert data["name"] == "test"
     assert not data["mounted"]
+    assert len(data["_links"]) == 1
 
 
 def test_put_volume(client: Client):
@@ -64,6 +63,7 @@ def test_put_volume(client: Client):
     assert res.status_code == 200
     assert data["name"] == "test"
     assert data["mounted"]
+    assert len(data["_links"]) == 2
 
 
 @pytest.mark.parametrize("password", [("",), ("FOO",)])
@@ -84,6 +84,7 @@ def test_delete_volume(client: Client):
     assert res.status_code == 200
     assert data["name"] == "test"
     assert not data["mounted"]
+    assert len(data["_links"]) == 1
 
 
 def test_get_files(client: Client):
