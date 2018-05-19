@@ -1,5 +1,7 @@
 import os
+from datetime import datetime
 from uuid import uuid4
+from tempfile import mkdtemp
 from flask import Flask, g, jsonify, abort, send_file, url_for, request, make_response
 from flask.views import MethodView
 from veracrypt import Volume, VolumeManager
@@ -7,13 +9,19 @@ from veracrypt import Volume, VolumeManager
 
 def to_json(volume: Volume):
     is_mounted = volume.is_mounted()
-    links = [{"rel": "self", "href": url_for("volume", name=volume.name)}]
+    links = [{"rel": "self", "href": url_for(VolumeAPI.view_name, name=volume.name)}]
 
     if is_mounted:
-        files_link = {"rel": "files", "href": url_for("volume_files", name=volume.name)}
+        files_link = {
+            "rel": "files", "href": url_for(FilesAPI.view_name, name=volume.name)
+        }
         links.append(files_link)
 
     return {"name": volume.name, "mounted": is_mounted, "_links": links}
+
+
+def make_link(rel, endpoint, **values):
+    return {"rel": rel, "href": url_for(endpoint, **values)}
 
 
 class BaseAPI(MethodView):
@@ -21,7 +29,7 @@ class BaseAPI(MethodView):
     def __init__(self, manager: VolumeManager):
         self.manager = manager
 
-    def get_volume(self, name):
+    def _get_volume(self, name):
         volume = self.manager.get_volume(name)
 
         if volume is None:
@@ -31,42 +39,45 @@ class BaseAPI(MethodView):
 
 
 class RootAPI(MethodView):
+    view_name = "root"
 
     def get(self):
-        return jsonify({"_links": [{"rel": "volumes", "href": url_for("volumes")}]})
+        return jsonify({"_links": [make_link("volumes", VolumesAPI.view_name)]})
 
 
 class VolumesAPI(BaseAPI):
+    view_name = "volumes"
 
     def get(self):
         response = {
             "volumes": [to_json(v) for v in self.manager.get_volumes()],
-            "_links": [{"rel": "self", "href": url_for("volumes")}],
+            "_links": [make_link("self", VolumesAPI.view_name)],
         }
         return jsonify(response)
 
 
 class VolumeAPI(BaseAPI):
+    view_name = "volume"
 
     def get(self, name):
-        volume = self.get_volume(name)
+        volume = self._get_volume(name)
         return jsonify(to_json(volume))
 
     def put(self, name):
-        volume = self.get_volume(name)
+        volume = self._get_volume(name)
         options = request.get_json()
         password = options.get("password", "") if isinstance(options, dict) else ""
 
         if not volume.is_mounted():
             try:
-                volume.mount(password, os.path.join("/tmp", uuid4().hex))
+                volume.mount(password, mkdtemp())
             except:
                 abort(401)
 
         return jsonify(to_json(volume))
 
     def delete(self, name):
-        volume = self.get_volume(name)
+        volume = self._get_volume(name)
 
         if volume.is_mounted():
             volume.unmount()
@@ -74,15 +85,17 @@ class VolumeAPI(BaseAPI):
         return jsonify(to_json(volume))
 
 
-class VolumeFilesAPI(BaseAPI):
+class FilesAPI(BaseAPI):
+    view_name = "volume_files"
 
     def get(self, name, path=""):
-        volume = self.get_volume(name)
+        volume = self._get_volume(name)
 
         if not volume.is_mounted():
             abort(400)
 
         mount_path = volume.get_mount_path()
+        path = path.strip("/")
         full_path = os.path.join(mount_path, path)
 
         if not os.path.abspath(full_path).startswith(mount_path):
@@ -92,35 +105,70 @@ class VolumeFilesAPI(BaseAPI):
             return send_file(full_path)
 
         if os.path.isdir(full_path):
-            _, dirnames, filenames = next(os.walk(full_path))
+            contents = self._map_directory(volume.name, path, full_path)
             response = {
-                "directories": dirnames,
-                "files": filenames,
+                "contents": list(contents),
                 "_links": [
-                    {"rel": "self", "href": url_for("volume_files", name=volume.name)}
+                    make_link(
+                        "self",
+                        FilesAPI.view_name,
+                        name=volume.name,
+                        path=path if path != "" else None,
+                    )
                 ],
             }
             return jsonify(response)
 
         abort(404)
 
+    def _map_directory(self, volume_name, relative_path, full_path):
+        names = os.listdir(full_path)
+
+        for name in names:
+            absname = os.path.join(full_path, name)
+            modified = datetime.utcfromtimestamp(os.path.getmtime(absname)).isoformat()
+            link = make_link(
+                "self",
+                FilesAPI.view_name,
+                name=volume_name,
+                path=os.path.join(relative_path, name),
+            )
+
+            if os.path.isdir(absname):
+                yield {
+                    "type": "directory",
+                    "name": name,
+                    "modified": modified,
+                    "_links": [link],
+                }
+            elif os.path.isfile(absname):
+                yield {
+                    "type": "file",
+                    "name": name,
+                    "modified": modified,
+                    "size": os.path.getsize(absname),
+                    "_links": [link],
+                }
+
 
 def make_app(manager: VolumeManager):
     app = Flask(__name__)
 
-    root_view = RootAPI.as_view("root")
-    volumes_view = VolumesAPI.as_view("volumes", manager=manager)
-    volume_view = VolumeAPI.as_view("volume", manager=manager)
-    volume_files_view = VolumeFilesAPI.as_view("volume_files", manager=manager)
+    root_view = RootAPI.as_view(RootAPI.view_name)
+    volumes_view = VolumesAPI.as_view(VolumesAPI.view_name, manager=manager)
+    volume_view = VolumeAPI.as_view(VolumeAPI.view_name, manager=manager)
+    files_view = FilesAPI.as_view(FilesAPI.view_name, manager=manager)
 
     app.add_url_rule("/", view_func=root_view)
-    app.add_url_rule("/volumes", view_func=volumes_view)
+    app.add_url_rule("/volumes", view_func=volumes_view, strict_slashes=False)
     app.add_url_rule("/volumes/<name>", view_func=volume_view)
-    app.add_url_rule("/volumes/<name>/files", view_func=volume_files_view)
-    app.add_url_rule("/volumes/<name>/files/<path:path>", view_func=volume_files_view)
+    app.add_url_rule(
+        "/volumes/<name>/files", view_func=files_view, strict_slashes=False
+    )
+    app.add_url_rule("/volumes/<name>/files/<path:path>", view_func=files_view)
 
     return app
 
 
-VOLUMES_PATH = os.path.join(os.getcwd(), "volumes")
-app = make_app(VolumeManager(VOLUMES_PATH))
+manager = VolumeManager(os.path.join(os.getcwd(), "volumes"))
+app = make_app(manager)

@@ -95,5 +95,10 @@ def test_get_files(client: Client):
     data = res.get_json()
 
     assert res.status_code == 200
-    assert "bar.txt" in data["files"]
-    assert "foo" in data["directories"]
+    assert any(
+        x["name"] == "bar.txt" and x["type"] == "file" and x["size"] == 11
+        for x in data["contents"]
+    )
+    assert any(
+        x["name"] == "foo" and x["type"] == "directory" for x in data["contents"]
+    )
