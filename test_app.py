@@ -94,4 +94,5 @@ def test_get_files(client: Client):
     data = res.get_json()
 
     assert res.status_code == 200
-    assert data["files"] == ["bar.txt"]
+    assert "bar.txt" in data["files"]
+    assert "foo" in data["directories"]
