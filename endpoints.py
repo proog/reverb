@@ -7,21 +7,19 @@ from flask.views import MethodView
 from veracrypt import Volume, VolumeManager
 
 
+def make_link(rel, endpoint, **values):
+    return {"rel": rel, "href": url_for(endpoint, **values)}
+
+
 def to_json(volume: Volume):
     is_mounted = volume.is_mounted()
-    links = [{"rel": "self", "href": url_for(VolumeAPI.view_name, name=volume.name)}]
+    links = [make_link("self", VolumeAPI.view_name, name=volume.name)]
 
     if is_mounted:
-        files_link = {
-            "rel": "files", "href": url_for(FilesAPI.view_name, name=volume.name)
-        }
+        files_link = make_link("files", FilesAPI.view_name, name=volume.name)
         links.append(files_link)
 
     return {"name": volume.name, "mounted": is_mounted, "_links": links}
-
-
-def make_link(rel, endpoint, **values):
-    return {"rel": rel, "href": url_for(endpoint, **values)}
 
 
 class BaseAPI(MethodView):
